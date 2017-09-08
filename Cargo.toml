@@ -1,0 +1,7 @@
+[package]
+name = "unbounded-spsc"
+version = "0.1.0"
+authors = ["Shane Pearman <spearman@github.com>"]
+
+[dependencies]
+bounded-spsc-queue = "0.2.*"
