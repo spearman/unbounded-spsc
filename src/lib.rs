@@ -523,9 +523,17 @@ impl std::error::Error for TryRecvError {
   }
 }
 
+/// # Panics
+///
+/// Zero-size types:
+///
+/// ```should_panic
+/// # use unbounded_spsc::channel;
+/// let (p, c) = channel::<()>();   // ERROR: 0-size types are not supported
+/// ```
 pub fn channel <T : 'static> () -> (Sender <T>, Receiver <T>) {
   if std::mem::size_of::<T>() == 0 {
-    panic!("ERROR: 0-sized types are not supported");
+    panic!("ERROR: 0-size types are not supported");
   }
   let (producer, consumer) = bounded_spsc_queue::make (INITIAL_CAPACITY);
   let (send_new, receive_new) = std::sync::mpsc::channel();
