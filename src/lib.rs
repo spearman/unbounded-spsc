@@ -210,8 +210,6 @@ impl <T> Receiver <T> {
         // this boolean result is not used: `try_recv` is always called below
         let _has_data = self.abort_selection();
       }
-    } else {
-      wait_token.wait();
     }
     match self.try_recv() {
       Ok (t) => unsafe {
@@ -532,9 +530,7 @@ impl std::error::Error for TryRecvError {
 /// let (p, c) = channel::<()>();   // ERROR: 0-size types are not supported
 /// ```
 pub fn channel <T : 'static> () -> (Sender <T>, Receiver <T>) {
-  if std::mem::size_of::<T>() == 0 {
-    panic!("ERROR: 0-size types are not supported");
-  }
+  assert!(0 < std::mem::size_of::<T>(), "zero-size types not supported");
   let (producer, consumer) = bounded_spsc_queue::make (INITIAL_CAPACITY);
   let (send_new, receive_new) = std::sync::mpsc::channel();
   let inner = std::sync::Arc::new (
@@ -582,12 +578,17 @@ mod tests {
     tx.send(box 1).unwrap();
   }
 
+  // FIXME: test failed on an unwrap
   #[test]
   fn smoke_threads() {
     let (tx, rx) = channel::<i32>();
     let _t = std::thread::spawn (move|| {
+      // FIXME: debug
+      println!("smoke threads sending...");
       tx.send (1).unwrap();
     });
+    // FIXME: debug
+    println!("smoke threads receiving...");
     assert_eq!(rx.recv().unwrap(), 1);
   }
 
@@ -898,7 +899,6 @@ mod tests {
     assert_eq!(rx.recv_timeout (std::time::Duration::from_millis (1)), Ok (true));
   }
 
-  // FIXME: will sometimes run indefinitely
   #[test]
   fn stress_recv_timeout_two_threads() {
     let (tx, rx) = channel();
@@ -908,7 +908,7 @@ mod tests {
     std::thread::spawn (move || {
       for i in 0..stress {
         if i % 2 == 0 {
-          std::thread::sleep(timeout * 2);
+          std::thread::sleep (timeout * 2);
         }
         tx.send (1usize).unwrap();
       }
@@ -921,7 +921,9 @@ mod tests {
           assert_eq!(n, 1usize);
           recv_count += 1;
         }
-        Err (RecvTimeoutError::Timeout) => continue,
+        Err (RecvTimeoutError::Timeout) => {
+          continue
+        },
         Err (RecvTimeoutError::Disconnected) => break,
       }
     }
@@ -982,6 +984,10 @@ mod tests {
     assert_eq!(count_rx.recv().unwrap(), 4);
   }
 
+  // FIXME: failures
+  // - failed with assertion on line 394 in send fn
+  //   assert!(second.is_none())
+  // - failed to finish in less than 60 seconds
   #[test]
   fn test_recv_try_iter() {
     let (request_tx, request_rx) = channel();
@@ -997,15 +1003,22 @@ mod tests {
             return count;
           }
         }
+        // FIXME: debug
+        println!("test recv try iter send request...");
         request_tx.send (true).unwrap();
       }
     });
 
     for _ in request_rx.iter() {
+      // FIXME: debug
+      println!("test recv try iter send response...");
       if response_tx.send (2).is_err() {
         break;
       }
     }
+
+    // FIXME: debug
+    println!("test recv try iter join...");
 
     assert_eq!(t.join().unwrap(), 6);
   }
@@ -1036,6 +1049,7 @@ mod tests {
     assert_eq!(iter.next().is_none(), true);
   }
 
+  // FIXME: test failed unwrap on RecvError
   #[test]
   fn try_recv_states() {
     let (tx1, rx1) = channel::<i32>();
