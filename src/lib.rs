@@ -463,13 +463,13 @@ impl <T> Iterator for IntoIter <T> {
 
 impl std::fmt::Display for RecvError {
   fn fmt (&self, f : &mut std::fmt::Formatter) -> std::fmt::Result {
-    "receiving on a closed cahnnel".fmt (f)
+    "receiving on a closed channel".fmt (f)
   }
 }
 
 impl std::error::Error for RecvError {
   fn description (&self) -> &str {
-    "receiving on a closed cahnnel"
+    "receiving on a closed channel"
   }
 
   fn cause (&self) -> Option <&std::error::Error> {
@@ -485,13 +485,13 @@ impl <T> std::fmt::Debug for SendError <T> {
 
 impl <T> std::fmt::Display for SendError <T> {
   fn fmt (&self, f : &mut std::fmt::Formatter) -> std::fmt::Result {
-    "sending on a closed cahnnel".fmt (f)
+    "sending on a closed channel".fmt (f)
   }
 }
 
 impl <T : Send> std::error::Error for SendError <T> {
   fn description (&self) -> &str {
-    "sending on a closed cahnnel"
+    "sending on a closed channel"
   }
 
   fn cause (&self) -> Option <&std::error::Error> {
