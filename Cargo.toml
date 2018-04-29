@@ -3,6 +3,9 @@ name = "unbounded-spsc"
 version = "0.1.2"
 authors = ["Shane Pearman <spearman@github.com>"]
 license = "Apache-2.0"
+description = "An unbounded spsc queue built from `bounded_spsc_queue`s"
+repository = "https://github.com/spearman/unbounded-spsc-queue"
+readme = "README.md"
 
 [dependencies]
 bounded-spsc-queue = "0.2.*"
