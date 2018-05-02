@@ -1,6 +1,6 @@
 # `unbounded_spsc`
 
-> An "unbounded" extension of `bounded_spsc_queue`s.
+> An "unbounded" extension of `bounded_spsc_queue`.
 
 This crate provides an unbounded SPSC queue with asynchronous sends, using
 [`bounded_spsc_queue`](https://crates.io/crates/bounded-spsc-queue) for the
