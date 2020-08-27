@@ -4,6 +4,7 @@
 
 #![feature(optin_builtin_traits)]
 #![feature(box_syntax)]
+#![feature(negative_impls)]
 
 extern crate bounded_spsc_queue;
 
