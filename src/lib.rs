@@ -2,7 +2,7 @@
 //! standard library to an unbounded SPSC channel backed by
 //! `bounded_spsc_queue`.
 
-#![feature(optin_builtin_traits)]
+#![feature(result_into_ok_or_err)]
 #![feature(box_syntax)]
 #![feature(negative_impls)]
 
@@ -341,8 +341,9 @@ impl <T> Drop for Receiver <T> {
     // TODO: find out if this is required or we can just drop the queue
     let mut steals = unsafe { *self.steals.get() };
     while {
-      let count = self.inner.counter.compare_and_swap (
-        steals, DISCONNECTED, Ordering::SeqCst);
+      let count = self.inner.counter.compare_exchange (
+        steals, DISCONNECTED, Ordering::SeqCst, Ordering::SeqCst
+      ).into_ok_or_err();
       count != DISCONNECTED && count != steals
     } {
       while let Some (_t) = unsafe { (*self.consumer.get()).try_pop() } {
@@ -473,7 +474,7 @@ impl std::error::Error for RecvError {
     "receiving on a closed channel"
   }
 
-  fn cause (&self) -> Option <&std::error::Error> {
+  fn cause (&self) -> Option <&dyn std::error::Error> {
     None
   }
 }
@@ -495,7 +496,7 @@ impl <T : Send> std::error::Error for SendError <T> {
     "sending on a closed channel"
   }
 
-  fn cause (&self) -> Option <&std::error::Error> {
+  fn cause (&self) -> Option <&dyn std::error::Error> {
     None
   }
 }
@@ -517,7 +518,7 @@ impl std::error::Error for TryRecvError {
     }
   }
 
-  fn cause (&self) -> Option <&std::error::Error> {
+  fn cause (&self) -> Option <&dyn std::error::Error> {
     None
   }
 }

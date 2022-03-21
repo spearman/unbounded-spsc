@@ -4,12 +4,12 @@
 
 extern crate unbounded_spsc;
 
-const MESSAGE_COUNT : u64 = 10_000_000;
+const MESSAGE_COUNT     : u64 = 10_000_000;
 
-static SENDER_STARTED
-  : std::sync::atomic::AtomicBool = std::sync::atomic::ATOMIC_BOOL_INIT;
-static RECEIVER_STARTED
-  : std::sync::atomic::AtomicBool = std::sync::atomic::ATOMIC_BOOL_INIT;
+static SENDER_STARTED   : std::sync::atomic::AtomicBool =
+  std::sync::atomic::AtomicBool::new (false);
+static RECEIVER_STARTED : std::sync::atomic::AtomicBool =
+  std::sync::atomic::AtomicBool::new (false);
 
 #[derive(Debug,PartialEq)]
 struct Mystruct {

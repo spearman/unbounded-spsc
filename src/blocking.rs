@@ -20,8 +20,10 @@ impl !Sync for WaitToken {}
 
 impl SignalToken {
   pub fn signal (&self) -> bool {
-    let wake = !self.inner.woken.compare_and_swap (
-      false, true, std::sync::atomic::Ordering::SeqCst);
+    let wake = self.inner.woken.compare_exchange (
+      false, true, std::sync::atomic::Ordering::SeqCst,
+      std::sync::atomic::Ordering::SeqCst
+    ).is_ok();
     if wake {
       self.inner.thread.unpark();
     }
