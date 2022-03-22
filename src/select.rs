@@ -1,8 +1,7 @@
 #![allow(dead_code)]
 
-use ::std;
-use ::{Receiver, RecvError, SelectionResult};
-use ::blocking;
+use std;
+use crate::{blocking, Receiver, RecvError, SelectionResult};
 
 /// A "receiver set" structure used to manage a set of receivers being selected
 /// over.

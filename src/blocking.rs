@@ -1,4 +1,4 @@
-use ::std;
+use std;
 
 struct Inner {
   thread : std::thread::Thread,

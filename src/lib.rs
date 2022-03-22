@@ -1,12 +1,12 @@
 //! This library adapts the block-waiting `recv` mechanism from the Rust
 //! standard library to an unbounded SPSC channel backed by
-//! `bounded_spsc_queue`.
+//! `spsc`.
 
 #![feature(result_into_ok_or_err)]
 #![feature(box_syntax)]
 #![feature(negative_impls)]
 
-extern crate bounded_spsc_queue;
+use spsc_bounded_queue as spsc;
 
 use std::sync::atomic::Ordering;
 
@@ -21,15 +21,15 @@ const MAX_STEALS       : isize = 1 << 20;   // ~1 million
 const INITIAL_CAPACITY : usize = 128;
 
 pub struct Receiver <T> {
-  consumer    : std::cell::UnsafeCell <bounded_spsc_queue::Consumer <T>>,
-  receive_new : std::sync::mpsc::Receiver <bounded_spsc_queue::Consumer <T>>,
+  consumer    : std::cell::UnsafeCell <spsc::Consumer <T>>,
+  receive_new : std::sync::mpsc::Receiver <spsc::Consumer <T>>,
   inner       : std::sync::Arc <Inner>,
   steals      : std::cell::UnsafeCell <isize>
 }
 
 pub struct Sender <T> {
-  producer : std::cell::UnsafeCell <bounded_spsc_queue::Producer <T>>,
-  send_new : std::sync::mpsc::Sender <bounded_spsc_queue::Consumer <T>>,
+  producer : std::cell::UnsafeCell <spsc::Producer <T>>,
+  send_new : std::sync::mpsc::Sender <spsc::Consumer <T>>,
   inner    : std::sync::Arc <Inner>
 }
 
@@ -362,7 +362,7 @@ impl <T> Sender <T> {
         Some (t) => {   // queue full
           let new_capacity = 2 * unsafe { (*self.producer.get()).capacity() };
           let (new_producer, new_consumer)
-            = bounded_spsc_queue::make (new_capacity);
+            = spsc::make (new_capacity);
           // TODO: We are using a side channel here to send the new consumer
           // which was not part of the original standard library channel
           // implementation. Are we sure that this is safe to unwrap or should
@@ -384,12 +384,12 @@ impl <T> Sender <T> {
         DISCONNECTED => {
           self.inner.counter.store (DISCONNECTED, Ordering::SeqCst);
           // We want to guarantee if a message was not received that we get it
-          // back; since bounded_spsc_queue::{Producer,Consumer} have the same
+          // back; since spsc::{Producer,Consumer} have the same
           // internal representation (as a singleton struct containing Arc
           // <Buffer <T>>), we can safely transmute the producer in order to
           // pop the message back if it was orphaned.
           unsafe {
-            let consumer : bounded_spsc_queue::Consumer <T>
+            let consumer : spsc::Consumer <T>
               = std::mem::transmute (self.producer.get());
             let first    = consumer.try_pop();
             let second   = consumer.try_pop();
@@ -533,7 +533,7 @@ impl std::error::Error for TryRecvError {
 /// ```
 pub fn channel <T : 'static> () -> (Sender <T>, Receiver <T>) {
   assert!(0 < std::mem::size_of::<T>(), "zero-size types not supported");
-  let (producer, consumer) = bounded_spsc_queue::make (INITIAL_CAPACITY);
+  let (producer, consumer) = spsc::make (INITIAL_CAPACITY);
   let (send_new, receive_new) = std::sync::mpsc::channel();
   let inner = std::sync::Arc::new (
     Inner {
