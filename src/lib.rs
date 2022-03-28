@@ -523,16 +523,7 @@ impl std::error::Error for TryRecvError {
   }
 }
 
-/// # Panics
-///
-/// Zero-size types:
-///
-/// ```should_panic
-/// # use unbounded_spsc::channel;
-/// let (p, c) = channel::<()>();   // ERROR: 0-size types are not supported
-/// ```
 pub fn channel <T : 'static> () -> (Sender <T>, Receiver <T>) {
-  assert!(0 < std::mem::size_of::<T>(), "zero-size types not supported");
   let (producer, consumer) = spsc::make (INITIAL_CAPACITY);
   let (send_new, receive_new) = std::sync::mpsc::channel();
   let inner = std::sync::Arc::new (
@@ -1081,5 +1072,12 @@ mod tests {
     let (tx, _) = channel();
     let _ = tx.send (123);
     assert_eq!(tx.send (123), Err (SendError (123)));
+  }
+
+  #[test]
+  fn zero_size() {
+    let (tx, rx) = channel::<()>();
+    tx.send (()).unwrap();
+    assert_eq!(rx.recv().unwrap(), ());
   }
 }
