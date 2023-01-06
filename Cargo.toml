@@ -1,6 +1,6 @@
 [package]
 name = "unbounded-spsc"
-version = "0.1.7"
+version = "0.1.8"
 authors = ["Shane Pearman <spearman@github.com>"]
 license = "Apache-2.0"
 description = "An unbounded spsc queue built from `bounded_spsc_queue`s"

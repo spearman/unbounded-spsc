@@ -2,7 +2,6 @@
 //! standard library to an unbounded SPSC channel backed by
 //! `spsc`.
 
-#![feature(result_into_ok_or_err)]
 #![feature(box_syntax)]
 #![feature(negative_impls)]
 
@@ -343,7 +342,7 @@ impl <T> Drop for Receiver <T> {
     while {
       let count = self.inner.counter.compare_exchange (
         steals, DISCONNECTED, Ordering::SeqCst, Ordering::SeqCst
-      ).into_ok_or_err();
+      ).unwrap_or_else (|i| i);
       count != DISCONNECTED && count != steals
     } {
       while let Some (_t) = unsafe { (*self.consumer.get()).try_pop() } {
