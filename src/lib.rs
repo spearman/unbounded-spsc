@@ -5,7 +5,7 @@
 #![feature(box_syntax)]
 #![feature(negative_impls)]
 
-use spsc_bounded_queue as spsc;
+use bounded_spsc_queue as spsc;
 
 use std::sync::atomic::Ordering;
 

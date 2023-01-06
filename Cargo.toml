@@ -9,4 +9,4 @@ readme = "README.md"
 edition = "2021"
 
 [dependencies]
-spsc-bounded-queue = { version = "0.0.2", git = "https://github.com/crsaracco/spsc-bounded-queue" }
+bounded-spsc-queue = "0.4.*"
