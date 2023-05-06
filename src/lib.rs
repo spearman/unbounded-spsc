@@ -2,7 +2,6 @@
 //! standard library to an unbounded SPSC channel backed by
 //! `spsc`.
 
-#![feature(box_syntax)]
 #![feature(negative_impls)]
 
 use bounded_spsc_queue as spsc;
@@ -567,7 +566,7 @@ mod tests {
   #[test]
   fn drop_full() {
     let (tx, _rx) = channel::<Box <isize>>();
-    tx.send(box 1).unwrap();
+    tx.send(Box::new (1)).unwrap();
   }
 
   // FIXME: test failed on an unwrap
@@ -705,7 +704,7 @@ mod tests {
     // Testing that the sender cleans up the payload if receiver is closed
     let (tx, rx) = channel::<Box <i32>>();
     drop (rx);
-    assert!(tx.send (box 0).is_err());
+    assert!(tx.send (Box::new (0)).is_err());
   }
 
   #[test]
@@ -723,7 +722,7 @@ mod tests {
   #[test]
   fn oneshot_single_thread_send_then_recv() {
     let (tx, rx) = channel::<Box <i32>>();
-    tx.send (box 10).unwrap();
+    tx.send (Box::new (10)).unwrap();
     assert!(*rx.recv().unwrap() == 10);
   }
 
@@ -784,7 +783,7 @@ mod tests {
       assert!(*rx.recv().unwrap() == 10);
     });
 
-    tx.send (box 10).unwrap();
+    tx.send (Box::new (10)).unwrap();
   }
 
   #[test]
@@ -846,7 +845,7 @@ mod tests {
     for _ in 0..stress_factor() {
       let (tx, rx) = channel::<Box <isize>>();
       let _t = std::thread::spawn (move|| {
-        tx.send (box 10).unwrap();
+        tx.send (Box::new (10)).unwrap();
       });
       assert!(*rx.recv().unwrap() == 10);
     }
@@ -864,7 +863,7 @@ mod tests {
         if i == 10 { return }
 
         std::thread::spawn (move|| {
-          tx.send (box i).unwrap();
+          tx.send (Box::new (i)).unwrap();
           send (tx, i + 1);
         });
       }
