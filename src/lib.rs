@@ -34,7 +34,7 @@ pub struct Sender <T> {
 struct Inner {
   counter   : std::sync::atomic::AtomicIsize,
   connected : std::sync::atomic::AtomicBool,
-  to_wake   : std::sync::atomic::AtomicUsize
+  to_wake   : std::sync::atomic::AtomicPtr <blocking::Inner>
 }
 
 #[derive(Debug)]
@@ -220,12 +220,12 @@ impl <T> Receiver <T> {
     }
   }
 
-  fn decrement (&self, token : blocking::SignalToken)
-    -> Result <(), blocking::SignalToken>
+  fn decrement (&self, token : std::sync::Arc <blocking::Inner>)
+    -> Result <(), std::sync::Arc <blocking::Inner>>
   {
-    assert_eq!(self.inner.to_wake.load (Ordering::SeqCst), 0);
-    let ptr = unsafe { token.cast_to_usize() };
-    self.inner.to_wake.store (ptr, Ordering::SeqCst);
+    assert_eq!(self.inner.to_wake.load (Ordering::SeqCst), std::ptr::null_mut());
+    self.inner.to_wake.store (std::sync::Arc::as_ptr (&token).cast_mut(),
+      Ordering::SeqCst);
     let steals = unsafe { std::ptr::replace (self.steals.get(), 0) };
     match self.inner.counter.fetch_sub (1 + steals, Ordering::SeqCst) {
       DISCONNECTED => {
@@ -238,8 +238,8 @@ impl <T> Receiver <T> {
         }
       }
     }
-    self.inner.to_wake.store (0, Ordering::SeqCst);
-    Err (unsafe { blocking::SignalToken::cast_from_usize (ptr) })
+    self.inner.to_wake.store (std::ptr::null_mut(), Ordering::SeqCst);
+    Err (token)
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -250,7 +250,7 @@ impl <T> Receiver <T> {
     0 < unsafe { (*self.consumer.get()).size() }
   }
 
-  pub fn start_selection (&self, token : blocking::SignalToken)
+  pub fn start_selection (&self, token : std::sync::Arc <blocking::Inner>)
     -> SelectionResult
   {
     match self.decrement (token) {
@@ -269,7 +269,8 @@ impl <T> Receiver <T> {
     let steals = 1;
     let prev = self.bump (steals + 1);
     let has_data = if prev == DISCONNECTED {
-      assert_eq! (self.inner.to_wake.load (Ordering::SeqCst), 0);
+      assert_eq!(self.inner.to_wake.load (Ordering::SeqCst),
+        std::ptr::null_mut());
       true
     } else {
       let cur = prev + steals + 1;
@@ -277,7 +278,9 @@ impl <T> Receiver <T> {
       if prev < 0 {
         drop (self.inner.take_to_wake());
       } else {
-        while self.inner.to_wake.load (Ordering::SeqCst) != 0 {
+        while self.inner.to_wake.load (Ordering::SeqCst) !=
+          std::ptr::null_mut()
+        {
           std::thread::yield_now();
         }
       }
@@ -431,11 +434,11 @@ impl <T> Drop for Sender <T> {
 }
 
 impl Inner {
-  fn take_to_wake (&self) -> blocking::SignalToken {
-    let ptr = self.to_wake.swap (0, Ordering::SeqCst);
-    assert!(ptr != 0);
+  fn take_to_wake (&self) -> std::sync::Arc <blocking::Inner> {
+    let ptr = self.to_wake.swap (std::ptr::null_mut(), Ordering::SeqCst);
+    assert!(ptr != std::ptr::null_mut());
     unsafe {
-      blocking::SignalToken::cast_from_usize (ptr)
+      std::sync::Arc::from_raw (ptr)
     }
   }
 }
@@ -528,7 +531,7 @@ pub fn channel <T : 'static> () -> (Sender <T>, Receiver <T>) {
     Inner {
       counter:   std::sync::atomic::AtomicIsize::new (0),
       connected: std::sync::atomic::AtomicBool::new (true),
-      to_wake:   std::sync::atomic::AtomicUsize::new (0)
+      to_wake:   std::sync::atomic::AtomicPtr::new (std::ptr::null_mut())
     }
   );
   let sender    = Sender {

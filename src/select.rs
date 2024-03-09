@@ -45,7 +45,8 @@ pub enum StartResult {
 
 pub trait Packet {
   fn can_recv        (&self) -> bool;
-  fn start_selection (&self, token : blocking::SignalToken) -> StartResult;
+  fn start_selection (&self, token : std::sync::Arc <blocking::Inner>)
+    -> StartResult;
   fn abort_selection (&self) -> bool;
 }
 
@@ -240,7 +241,9 @@ impl <T> Packet for Receiver <T> {
   fn can_recv (&self) -> bool {
     self.can_recv()
   }
-  fn start_selection (&self, token : blocking::SignalToken) -> StartResult {
+  fn start_selection (&self, token : std::sync::Arc <blocking::Inner>)
+    -> StartResult
+  {
     match self.start_selection (token) {
       SelectionResult::SelSuccess  => StartResult::Installed,
       SelectionResult::SelCanceled => StartResult::Abort

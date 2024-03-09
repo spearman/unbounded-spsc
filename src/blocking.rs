@@ -1,28 +1,41 @@
 use std;
+use std::sync::{atomic, Arc};
 
-struct Inner {
+pub struct Inner {
   thread : std::thread::Thread,
-  woken  : std::sync::atomic::AtomicBool
+  woken  : atomic::AtomicBool
 }
 unsafe impl Send for Inner {}
 unsafe impl Sync for Inner {}
 
 #[derive(Clone)]
 pub struct SignalToken {
-  inner : std::sync::Arc <Inner>
+  inner : Arc <Inner>
 }
 
 pub struct WaitToken {
-  inner : std::sync::Arc <Inner>
+  inner : Arc <Inner>
 }
 impl !Send for WaitToken {}
 impl !Sync for WaitToken {}
 
+impl Inner {
+  pub fn signal (&self) -> bool {
+    let wake = self.woken.compare_exchange (
+      false, true, atomic::Ordering::SeqCst, atomic::Ordering::SeqCst
+    ).is_ok();
+    if wake {
+      self.thread.unpark();
+    }
+    wake
+  }
+}
+
 impl SignalToken {
   pub fn signal (&self) -> bool {
     let wake = self.inner.woken.compare_exchange (
-      false, true, std::sync::atomic::Ordering::SeqCst,
-      std::sync::atomic::Ordering::SeqCst
+      false, true, atomic::Ordering::SeqCst,
+      atomic::Ordering::SeqCst
     ).is_ok();
     if wake {
       self.inner.thread.unpark();
@@ -31,27 +44,29 @@ impl SignalToken {
   }
 
   #[inline]
-  pub unsafe fn cast_to_usize (self) -> usize {
-    std::mem::transmute (self.inner)
+  pub fn to_atomic_ptr (self) -> atomic::AtomicPtr <Inner> {
+    atomic::AtomicPtr::new (Arc::as_ptr (&self.inner).cast_mut())
   }
 
   #[inline]
-  pub unsafe fn cast_from_usize (signal_ptr : usize) -> SignalToken {
+  pub unsafe fn from_atomic_ptr (signal_ptr : atomic::AtomicPtr <Inner>)
+    -> SignalToken
+  {
     SignalToken {
-      inner: std::mem::transmute (signal_ptr)
+      inner: Arc::from_raw (signal_ptr.into_inner())
     }
   }
 }
 
 impl WaitToken {
   pub fn wait (self) {
-    while !self.inner.woken.load (std::sync::atomic::Ordering::SeqCst) {
+    while !self.inner.woken.load (atomic::Ordering::SeqCst) {
       std::thread::park()
     }
   }
 
   pub fn wait_max_until (self, end : std::time::Instant) -> bool {
-    while !self.inner.woken.load (std::sync::atomic::Ordering::SeqCst) {
+    while !self.inner.woken.load (atomic::Ordering::SeqCst) {
       let now = std::time::Instant::now();
       if end <= now {
         return false;
@@ -62,16 +77,13 @@ impl WaitToken {
   }
 }
 
-pub fn tokens() -> (WaitToken, SignalToken) {
-  let inner = std::sync::Arc::new (Inner {
+pub fn tokens() -> (WaitToken, Arc <Inner>) {
+  let signal_token = Arc::new (Inner {
     thread: std::thread::current(),
-    woken:  std::sync::atomic::AtomicBool::new (false)
+    woken:  atomic::AtomicBool::new (false)
   });
   let wait_token = WaitToken {
-    inner:  inner.clone()
-  };
-  let signal_token = SignalToken {
-    inner
+    inner:  signal_token.clone()
   };
   (wait_token, signal_token)
 }
