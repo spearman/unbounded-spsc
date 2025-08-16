@@ -11,7 +11,7 @@ use std::sync::atomic::Ordering;
 mod blocking;
 mod select;
 
-const DISCONNECTED     : isize = std::isize::MIN;
+const DISCONNECTED     : isize = isize::MIN;
 #[cfg(test)]
 const MAX_STEALS       : isize = 5;
 #[cfg(not(test))]
@@ -159,12 +159,14 @@ impl <T> Receiver <T> {
     }
   }
 
+  #[allow(mismatched_lifetime_syntaxes)]
   pub fn iter (&self) -> Iter <T> {
     Iter {
       rx: self
     }
   }
 
+  #[allow(mismatched_lifetime_syntaxes)]
   pub fn try_iter (&self) -> TryIter <T> {
     TryIter {
       rx: self
@@ -268,7 +270,7 @@ impl <T> Receiver <T> {
   fn abort_selection (&self) -> bool {
     let steals = 1;
     let prev = self.bump (steals + 1);
-    let has_data = if prev == DISCONNECTED {
+    if prev == DISCONNECTED {
       assert_eq! (self.inner.to_wake.load (Ordering::SeqCst), 0);
       true
     } else {
@@ -286,8 +288,7 @@ impl <T> Receiver <T> {
         *self.steals.get() = steals;
       }
       0 <= prev
-    };
-    has_data
+    }
   }
 
   fn bump (&self, amt : isize) -> isize {
@@ -359,8 +360,7 @@ impl <T> Sender <T> {
         None     => {}, // success
         Some (t) => {   // queue full
           let new_capacity = 2 * unsafe { (*self.producer.get()).capacity() };
-          let (new_producer, new_consumer)
-            = spsc::make (new_capacity);
+          let (new_producer, new_consumer) = spsc::make (new_capacity);
           // TODO: We are using a side channel here to send the new consumer
           // which was not part of the original standard library channel
           // implementation. Are we sure that this is safe to unwrap or should
@@ -392,9 +392,8 @@ impl <T> Sender <T> {
             let first    = consumer.try_pop();
             let second   = consumer.try_pop();
             assert!(second.is_none());
-            match first {
-              Some (t) => return Err (SendError (t)),
-              None     => {}
+            if let Some(t) = first {
+              return Err (SendError (t))
             }
           }
         },
