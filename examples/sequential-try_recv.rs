@@ -1,6 +1,6 @@
-//! send/try_recv 10,000,000 messages in sequence:
+//! `send/try_recv` 10,000,000 messages in sequence:
 //!
-//! ~25ns per send, ~35ns per try_recv
+//! ~25ns per send, ~35ns per `try_recv`
 
 extern crate unbounded_spsc;
 
@@ -23,7 +23,7 @@ fn sendfun (sender : unbounded_spsc::Sender <Mystruct>) {
   let duration = start_time.elapsed().unwrap();
   let duration_ns
     = (duration.as_secs() * 1_000_000_000) + duration.subsec_nanos() as u64;
-  println!("sendfun duration ns: {}", duration_ns);
+  println!("sendfun duration ns: {duration_ns}");
   println!("sendfun ns per message: {}", duration_ns / MESSAGE_COUNT);
 }
 
@@ -39,7 +39,7 @@ fn recvfun (receiver : unbounded_spsc::Receiver <Mystruct>) {
   let duration = start_time.elapsed().unwrap();
   let duration_ns
     = (duration.as_secs() * 1_000_000_000) + duration.subsec_nanos() as u64;
-  println!("recvfun duration ns: {}", duration_ns);
+  println!("recvfun duration ns: {duration_ns}");
   println!("recvfun ns per message: {}", duration_ns / MESSAGE_COUNT);
   println!("buffer ending capacity: {}", receiver.capacity());
 }

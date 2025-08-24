@@ -1,6 +1,6 @@
-//! send/try_recv 10,000,000 messages in parallel:
+//! `send/try_recv` 10,000,000 messages in parallel:
 //!
-//! ~30-125ns per send/try_recv
+//! ~30-125ns per `send/try_recv`
 
 extern crate unbounded_spsc;
 
@@ -22,7 +22,9 @@ fn sendfun (sender : unbounded_spsc::Sender <Mystruct>) {
   let mut counter = 0;
   SENDER_STARTED.store (true, std::sync::atomic::Ordering::SeqCst);
   // spin until receiver is started
-  while !RECEIVER_STARTED.load (std::sync::atomic::Ordering::SeqCst) {}
+  while !RECEIVER_STARTED.load (std::sync::atomic::Ordering::SeqCst) {
+    std::hint::spin_loop()
+  }
   let start_time = std::time::SystemTime::now();
   while counter < MESSAGE_COUNT {
     sender.send (Mystruct { x: counter as f64, y: 1.5, z: 2.0 }).unwrap();
@@ -31,14 +33,16 @@ fn sendfun (sender : unbounded_spsc::Sender <Mystruct>) {
   let duration = start_time.elapsed().unwrap();
   let duration_ns
     = (duration.as_secs() * 1_000_000_000) + duration.subsec_nanos() as u64;
-  println!("sendfun duration ns: {}", duration_ns);
+  println!("sendfun duration ns: {duration_ns}");
   println!("sendfun ns per message: {}", duration_ns / MESSAGE_COUNT);
 }
 
 fn recvfun (receiver : unbounded_spsc::Receiver <Mystruct>) {
   RECEIVER_STARTED.store (true, std::sync::atomic::Ordering::SeqCst);
   // spin until sender is started
-  while !SENDER_STARTED.load (std::sync::atomic::Ordering::SeqCst) {}
+  while !SENDER_STARTED.load (std::sync::atomic::Ordering::SeqCst) {
+    std::hint::spin_loop()
+  }
   let start_time = std::time::SystemTime::now();
   loop {
     match receiver.try_recv() {
@@ -50,7 +54,7 @@ fn recvfun (receiver : unbounded_spsc::Receiver <Mystruct>) {
   let duration = start_time.elapsed().unwrap();
   let duration_ns
     = (duration.as_secs() * 1_000_000_000) + duration.subsec_nanos() as u64;
-  println!("recvfun duration ns: {}", duration_ns);
+  println!("recvfun duration ns: {duration_ns}");
   println!("recvfun ns per message: {}", duration_ns / MESSAGE_COUNT);
   println!("buffer ending capacity: {}", receiver.capacity());
 }

@@ -23,22 +23,17 @@ fn sendfun (sender : unbounded_spsc::Sender <Mystruct>) {
   let duration = start_time.elapsed().unwrap();
   let duration_ns
     = (duration.as_secs() * 1_000_000_000) + duration.subsec_nanos() as u64;
-  println!("sendfun duration ns: {}", duration_ns);
+  println!("sendfun duration ns: {duration_ns}");
   println!("sendfun ns per message: {}", duration_ns / MESSAGE_COUNT);
 }
 
 fn recvfun (receiver : unbounded_spsc::Receiver <Mystruct>) {
   let start_time = std::time::SystemTime::now();
-  loop {
-    match receiver.recv() {
-      Ok  (_m) => (),
-      Err (_e) => break
-    }
-  }
+  while let Ok (_m) = receiver.recv() { }
   let duration = start_time.elapsed().unwrap();
-  let duration_ns
-    = (duration.as_secs() * 1_000_000_000) + duration.subsec_nanos() as u64;
-  println!("recvfun duration ns: {}", duration_ns);
+  let duration_ns = (duration.as_secs() * 1_000_000_000) + duration.subsec_nanos()
+    as u64;
+  println!("recvfun duration ns: {duration_ns}");
   println!("recvfun ns per message: {}", duration_ns / MESSAGE_COUNT);
   println!("buffer ending capacity: {}", receiver.capacity());
 }

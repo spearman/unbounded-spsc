@@ -36,7 +36,7 @@ impl SignalToken {
   }
 
   #[inline]
-  #[allow(clippy::missing_transmute_annotations)]
+  #[expect(clippy::missing_transmute_annotations)]
   pub unsafe fn cast_from_usize (signal_ptr : usize) -> SignalToken {
     SignalToken {
       inner: unsafe { std::mem::transmute (signal_ptr) }
