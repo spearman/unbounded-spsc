@@ -570,16 +570,14 @@ mod tests {
     tx.send(Box::new (1)).unwrap();
   }
 
-  // FIXME: test failed on an unwrap
+  // TODO: test failed on an unwrap
   #[test]
   fn smoke_threads() {
     let (tx, rx) = channel::<i32>();
     let _t = std::thread::spawn (move|| {
-      // FIXME: debug
       println!("smoke threads sending...");
       tx.send (1).unwrap();
     });
-    // FIXME: debug
     println!("smoke threads receiving...");
     assert_eq!(rx.recv().unwrap(), 1);
   }
@@ -974,7 +972,7 @@ mod tests {
     assert_eq!(count_rx.recv().unwrap(), 4);
   }
 
-  // FIXME: failures
+  // TODO: failures
   // - failed with assertion on line 394 in send fn
   //   assert!(second.is_none())
   // - failed to finish in less than 60 seconds
@@ -993,21 +991,18 @@ mod tests {
             return count;
           }
         }
-        // FIXME: debug
         println!("test recv try iter send request...");
         request_tx.send (true).unwrap();
       }
     });
 
     for _ in request_rx.iter() {
-      // FIXME: debug
       println!("test recv try iter send response...");
       if response_tx.send (2).is_err() {
         break;
       }
     }
 
-    // FIXME: debug
     println!("test recv try iter join...");
 
     assert_eq!(t.join().unwrap(), 6);
@@ -1039,7 +1034,7 @@ mod tests {
     assert!(iter.next().is_none());
   }
 
-  // FIXME: test failed unwrap on RecvError
+  // TODO: test failed unwrap on RecvError
   #[test]
   fn try_recv_states() {
     let (tx1, rx1) = channel::<i32>();
