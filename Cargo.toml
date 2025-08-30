@@ -11,6 +11,9 @@ edition = "2024"
 [dependencies]
 bounded-spsc-queue = "0.4.*"
 
+[lints.rust]
+unknown-lints = "deny"
+
 [lints.clippy]
 single-component-path-imports = "allow"
 # additional warnings
