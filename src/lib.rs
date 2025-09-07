@@ -38,12 +38,12 @@ struct Inner {
 }
 
 #[derive(Debug)]
-pub struct Iter <'a, T : 'a> {
+pub struct Iter <'a, T > {
   rx : &'a Receiver <T>
 }
 
 #[derive(Debug)]
-pub struct TryIter <'a, T : 'a> {
+pub struct TryIter <'a, T > {
   rx : &'a Receiver <T>
 }
 
@@ -550,7 +550,7 @@ pub fn channel <T : 'static> () -> (Sender <T>, Receiver <T>) {
 mod tests {
   use super::*;
 
-  pub fn stress_factor() -> usize {
+  pub(crate) fn stress_factor() -> usize {
     match std::env::var ("RUST_TEST_STRESS") {
       Ok  (val) => val.parse().unwrap(),
       Err (..)  => 1,

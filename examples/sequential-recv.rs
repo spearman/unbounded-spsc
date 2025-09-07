@@ -2,7 +2,8 @@
 //!
 //! ~25ns per send, ~35ns per recv
 
-extern crate unbounded_spsc;
+use std;
+use unbounded_spsc;
 
 const MESSAGE_COUNT : u64 = 10_000_000;
 

@@ -8,18 +8,18 @@ unsafe impl Send for Inner {}
 unsafe impl Sync for Inner {}
 
 #[derive(Clone)]
-pub struct SignalToken {
+pub(crate) struct SignalToken {
   inner : std::sync::Arc <Inner>
 }
 
-pub struct WaitToken {
+pub(crate) struct WaitToken {
   inner : std::sync::Arc <Inner>
 }
 impl !Send for WaitToken {}
 impl !Sync for WaitToken {}
 
 impl SignalToken {
-  pub fn signal (&self) -> bool {
+  pub(crate) fn signal (&self) -> bool {
     let wake = self.inner.woken.compare_exchange (
       false, true, std::sync::atomic::Ordering::SeqCst,
       std::sync::atomic::Ordering::SeqCst
@@ -31,13 +31,13 @@ impl SignalToken {
   }
 
   #[inline]
-  pub unsafe fn cast_to_usize (self) -> usize {
+  pub(crate) unsafe fn cast_to_usize (self) -> usize {
     unsafe { std::mem::transmute (self.inner) }
   }
 
   #[inline]
   #[expect(clippy::missing_transmute_annotations)]
-  pub unsafe fn cast_from_usize (signal_ptr : usize) -> SignalToken {
+  pub(crate) unsafe fn cast_from_usize (signal_ptr : usize) -> SignalToken {
     SignalToken {
       inner: unsafe { std::mem::transmute (signal_ptr) }
     }
@@ -45,13 +45,13 @@ impl SignalToken {
 }
 
 impl WaitToken {
-  pub fn wait (self) {
+  pub(crate) fn wait (self) {
     while !self.inner.woken.load (std::sync::atomic::Ordering::SeqCst) {
       std::thread::park()
     }
   }
 
-  pub fn wait_max_until (self, end : std::time::Instant) -> bool {
+  pub(crate) fn wait_max_until (self, end : std::time::Instant) -> bool {
     while !self.inner.woken.load (std::sync::atomic::Ordering::SeqCst) {
       let now = std::time::Instant::now();
       if end <= now {
@@ -63,7 +63,7 @@ impl WaitToken {
   }
 }
 
-pub fn tokens() -> (WaitToken, SignalToken) {
+pub(crate) fn tokens() -> (WaitToken, SignalToken) {
   let inner = std::sync::Arc::new (Inner {
     thread: std::thread::current(),
     woken:  std::sync::atomic::AtomicBool::new (false)

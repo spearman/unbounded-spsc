@@ -5,7 +5,7 @@ use crate::{blocking, Receiver, RecvError, SelectionResult};
 
 /// A "receiver set" structure used to manage a set of receivers being selected
 /// over.
-pub struct Select {
+pub(crate) struct Select {
   inner   : std::cell::UnsafeCell <Inner>,
   next_id : std::cell::Cell <usize>
 }
@@ -14,7 +14,7 @@ impl !Send for Select {}
 /// Handle to a receiver which is currently a member of a `Select` set of
 /// receivers, used to keep the receiver in the set as well as to interact
 /// with the underlying receiver.
-pub struct Handle <'rx, T : Send + 'rx> {
+pub(crate) struct Handle <'rx, T : Send> {
   /// The ID of this handle, used to compare against the return value of
   /// `Select:::wait()`
   id       : usize,
@@ -38,12 +38,12 @@ struct HandleIter {
 }
 
 #[derive(PartialEq, Eq)]
-pub enum StartResult {
+pub(crate) enum StartResult {
   Installed,
   Abort
 }
 
-pub trait Packet {
+pub(crate) trait Packet {
   fn can_recv        (&self) -> bool;
   fn start_selection (&self, token : blocking::SignalToken) -> StartResult;
   fn abort_selection (&self) -> bool;
@@ -51,7 +51,7 @@ pub trait Packet {
 
 impl Select {
   /// New empty selection structure.
-  pub const fn new () -> Select {
+  pub(crate) const fn new () -> Select {
     Select {
       inner: std::cell::UnsafeCell::new (Inner {
         head: std::ptr::null_mut(),
@@ -63,7 +63,7 @@ impl Select {
 
   /// New handle into this receiver set for a new receiver; does *not* add the
   /// receiver to the receiver set, for that call `add` on the handle itself.
-  pub fn handle <'a, T> (&'a self, rx : &'a Receiver <T>) -> Handle <'a, T>
+  pub(crate) fn handle <'a, T> (&'a self, rx : &'a Receiver <T>) -> Handle <'a, T>
     where T : Send
   {
     let id = self.next_id.get();
@@ -84,7 +84,7 @@ impl Select {
   /// with the matching `id` will have some sort of "event" available on it:
   /// either that data is available or the corresponding channel has been
   /// closed.
-  pub fn wait (&self) -> usize {
+  pub(crate) fn wait (&self) -> usize {
     self.wait2 (true)
   }
 
@@ -152,16 +152,16 @@ impl Drop for Select {
 
 impl <'rx, T> Handle <'rx, T> where T : Send {
   #[inline]
-  pub const fn id (&self) -> usize {
+  pub(crate) const fn id (&self) -> usize {
     self.id
   }
 
-  pub fn recv (&self) -> Result <T, RecvError> {
+  pub(crate) fn recv (&self) -> Result <T, RecvError> {
     self.rx.recv()
   }
 
   /// Add this handle to the receiver set that the handle was created from.
-  pub unsafe fn add (&mut self) {
+  pub(crate) unsafe fn add (&mut self) {
     if self.added {
       return
     }
@@ -183,7 +183,7 @@ impl <'rx, T> Handle <'rx, T> where T : Send {
   }
 
   /// Remove this handle from the receiver set.
-  pub unsafe fn remove (&mut self) {
+  pub(crate) unsafe fn remove (&mut self) {
     if !self.added {
       return
     }
