@@ -1,6 +1,14 @@
-//! This library adapts the block-waiting `recv` mechanism from the Rust
-//! standard library to an unbounded SPSC channel backed by
-//! `spsc`.
+//! This library adapts the block-waiting `recv` mechanism from the Rust standard
+//! library to an unbounded SPSC channel backed by `spsc`.
+//!
+//! # Delivery guarantee
+//!
+//! A successful [`Sender::send`] (`Ok(())`) does not guarantee that the corresponding
+//! [`Receiver::recv`] will observe the message. If the receiver is dropped concurrently
+//! with a send, the in-flight value may be silently discarded (it is destructed
+//! properly when the underlying queue is dropped; it is not leaked). This is a
+//! deliberate weakening relative to the std-library stream-flavor channel from which
+//! this design was originally adapted.
 
 #![feature(negative_impls)]
 
@@ -228,8 +236,20 @@ impl <T> Receiver <T> {
     -> Result <(), std::sync::Arc <blocking::Inner>>
   {
     assert_eq!(self.inner.to_wake.load (Ordering::SeqCst), std::ptr::null_mut());
-    self.inner.to_wake.store (std::sync::Arc::as_ptr (&token).cast_mut(),
-      Ordering::SeqCst);
+    // Consume `token` and stash its raw pointer in `to_wake`, leaking one strong
+    // reference into the AtomicPtr. The leaked ref is reclaimed either by
+    // `Inner::take_to_wake` (when a sender wakes us) or by `Arc::from_raw` below (when
+    // we cancel before blocking).
+    //
+    // NOTE: We must use `Arc::into_raw` (not `Arc::as_ptr`) here. Using `as_ptr` would
+    // leave the strong-count unchanged; `token` would then be dropped at function exit,
+    // releasing the ref, while the dangling-looking pointer remained in `to_wake`. A
+    // subsequent `take_to_wake` -> `Arc::from_raw` would over-decrement the strong
+    // count and free the allocation while another `Arc` still pointed at it -- a
+    // use-after-free / double-free that manifests as `tcache_thread_shutdown: unaligned
+    // tcache chunk detected` under glibc.
+    let ptr = std::sync::Arc::into_raw (token).cast_mut();
+    self.inner.to_wake.store (ptr, Ordering::SeqCst);
     let steals = unsafe { std::ptr::replace (self.steals.get(), 0) };
     match self.inner.counter.fetch_sub (1 + steals, Ordering::SeqCst) {
       DISCONNECTED => {
@@ -238,12 +258,17 @@ impl <T> Receiver <T> {
       n => {
         assert!(0 <= n);
         if n - steals <= 0 {
+          // Sender will reclaim the leaked ref via `take_to_wake`.
           return Ok (())
         }
       }
     }
     self.inner.to_wake.store (std::ptr::null_mut(), Ordering::SeqCst);
-    Err (token)
+    // Cancelled before blocking: no sender will read `to_wake`, so we reclaim the
+    // leaked strong reference ourselves and return it. SAFETY: `ptr` was produced by
+    // `Arc::into_raw` above and no other code path observed it (we just swapped null
+    // back into `to_wake`).
+    Err (unsafe { std::sync::Arc::from_raw (ptr) })
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -357,7 +382,21 @@ impl <T> Drop for Receiver <T> {
 
 impl <T> Sender <T> {
   /// Non-blocking send.
-  #[expect(clippy::missing_panics_doc)]
+  ///
+  /// # Delivery guarantee
+  ///
+  /// Returning `Ok(())` indicates that the message was successfully enqueued, but it
+  /// does **not** guarantee that the receiver will observe it: if the [`Receiver`] is
+  /// dropped concurrently with this call, the message may be silently discarded. The
+  /// orphaned value is destructed properly when the underlying queue is dropped; it is
+  /// not leaked.
+  //
+  // This is a deliberate weakening relative to the std-library stream-flavor channel
+  // from which this design was originally adapted. The std version returned the orphan
+  // to the caller via `Err(SendError(t))`, but the underlying `bounded-spsc-queue` does
+  // not expose a safe way to recover an already-pushed value from the producer side,
+  // and the previous implementation that did so via `std::mem::transmute` was unsound
+  // (see issues #1 and #4).
   pub fn send (&self, t : T) -> Result <(), SendError <T>> {
     if self.inner.connected.load (Ordering::SeqCst) {
       match unsafe { (*self.producer.get()).try_push (t) } {
@@ -386,21 +425,23 @@ impl <T> Sender <T> {
         -2 => {},
         DISCONNECTED => {
           self.inner.counter.store (DISCONNECTED, Ordering::SeqCst);
-          // We want to guarantee if a message was not received that we get it
-          // back; since spsc::{Producer,Consumer} have the same
-          // internal representation (as a singleton struct containing Arc
-          // <Buffer <T>>), we can safely transmute the producer in order to
-          // pop the message back if it was orphaned.
-          unsafe {
-            let consumer : spsc::Consumer <T>
-              = std::mem::transmute (self.producer.get());
-            let first    = consumer.try_pop();
-            let second   = consumer.try_pop();
-            assert!(second.is_none());
-            if let Some(t) = first {
-              return Err (SendError (t))
-            }
-          }
+          // The receiver disconnected after we successfully pushed the message onto the
+          // bounded queue. The value is now orphaned, but it is *not* leaked: it will
+          // be properly dropped either by the receiver's drain loop in `<Receiver<T> as
+          // Drop>::drop`, or by `bounded_spsc_queue::Buffer::<T>::drop`, which pops and
+          // drops every remaining element when the last `Arc<Buffer<T>>` reference is
+          // released.
+          //
+          // Historical note: the previous implementation here transmuted the producer
+          // pointer into a `Consumer<T>` value in order to pop the orphan back and
+          // return it via `Err(SendError(t))`. That transmute was unsound (issues #1
+          // and #4): the transmuted "Consumer"'s internal `Arc<Buffer<T>>` field
+          // pointed into the `Sender` stack frame, not a real heap allocation, so
+          // `try_pop` performed an out-of-bounds read and the fake `Arc`'s `Drop` would
+          // call `dealloc` on a non-allocated address. Recovering the value safely is
+          // not possible without an upstream change to `bounded-spsc-queue` to expose a
+          // producer-side pop or a `Consumer<T>` recovery primitive. See the `send`
+          // doc-comment for the resulting (weakened) delivery guarantee.
         },
         n => {
           assert! (0 <= n);
