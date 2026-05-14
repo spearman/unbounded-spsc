@@ -11,7 +11,7 @@ use std::sync::atomic::Ordering;
 mod blocking;
 mod select;
 
-const DISCONNECTED     : isize = std::isize::MIN;
+const DISCONNECTED     : isize = isize::MIN;
 #[cfg(test)]
 const MAX_STEALS       : isize = 5;
 #[cfg(not(test))]
@@ -38,12 +38,12 @@ struct Inner {
 }
 
 #[derive(Debug)]
-pub struct Iter <'a, T : 'a> {
+pub struct Iter <'a, T > {
   rx : &'a Receiver <T>
 }
 
 #[derive(Debug)]
-pub struct TryIter <'a, T : 'a> {
+pub struct TryIter <'a, T > {
   rx : &'a Receiver <T>
 }
 
@@ -78,10 +78,11 @@ pub enum SelectionResult {
 }
 
 impl <T> Receiver <T> {
-  /// Non-blocking receive, returns `Err (TryRecvError::Empty)` if buffer was
-  /// empty; will continue to receive pending messages from a disconnected
-  /// channel until it is empty, at which point further calls to this function
-  /// will return `Err (TryRecvError::Disconnected)`.
+  /// Non-blocking receive, returns `Err(TryRecvError::Empty)` if buffer was empty; will
+  /// continue to receive pending messages from a disconnected channel until it is
+  /// empty, at which point further calls to this function will return
+  /// `Err(TryRecvError::Disconnected)`.
+  #[expect(clippy::missing_panics_doc)]
   pub fn try_recv (&self) -> Result <T, TryRecvError> {
     match unsafe { (*self.consumer.get()).try_pop() } {
       Some (t) => unsafe {
@@ -96,6 +97,7 @@ impl <T> Receiver <T> {
               self.bump (n - m);
             }
           }
+          // TODO: can this be changed to a debug assertion ?
           assert!(0 <= *self.steals.get());
         }
         *self.steals.get() += 1;
@@ -159,13 +161,15 @@ impl <T> Receiver <T> {
     }
   }
 
-  pub fn iter (&self) -> Iter <T> {
+  #[expect(mismatched_lifetime_syntaxes)]
+  pub const fn iter (&self) -> Iter <T> {
     Iter {
       rx: self
     }
   }
 
-  pub fn try_iter (&self) -> TryIter <T> {
+  #[expect(mismatched_lifetime_syntaxes)]
+  pub const fn try_iter (&self) -> TryIter <T> {
     TryIter {
       rx: self
     }
@@ -207,7 +211,7 @@ impl <T> Receiver <T> {
       let timed_out = !wait_token.wait_max_until (deadline);
       if timed_out {
         // this boolean result is not used: `try_recv` is always called below
-        let _has_data = self.abort_selection();
+        let _has_data = self.abort_selection_();
       }
     }
     match self.try_recv() {
@@ -246,11 +250,11 @@ impl <T> Receiver <T> {
   //  select functions
   /////////////////////////////////////////////////////////////////////////////
 
-  pub fn can_recv (&self) -> bool {
+  fn can_recv_ (&self) -> bool {
     0 < unsafe { (*self.consumer.get()).size() }
   }
 
-  pub fn start_selection (&self, token : std::sync::Arc <blocking::Inner>)
+  fn start_selection_ (&self, token : std::sync::Arc <blocking::Inner>)
     -> SelectionResult
   {
     match self.decrement (token) {
@@ -265,10 +269,10 @@ impl <T> Receiver <T> {
   }
 
   /// Returns true if receiver has data pending.
-  fn abort_selection (&self) -> bool {
+  fn abort_selection_ (&self) -> bool {
     let steals = 1;
     let prev = self.bump (steals + 1);
-    let has_data = if prev == DISCONNECTED {
+    if prev == DISCONNECTED {
       assert_eq!(self.inner.to_wake.load (Ordering::SeqCst),
         std::ptr::null_mut());
       true
@@ -278,9 +282,7 @@ impl <T> Receiver <T> {
       if prev < 0 {
         drop (self.inner.take_to_wake());
       } else {
-        while self.inner.to_wake.load (Ordering::SeqCst) !=
-          std::ptr::null_mut()
-        {
+        while !self.inner.to_wake.load (Ordering::SeqCst).is_null() {
           std::thread::yield_now();
         }
       }
@@ -289,8 +291,7 @@ impl <T> Receiver <T> {
         *self.steals.get() = steals;
       }
       0 <= prev
-    };
-    has_data
+    }
   }
 
   fn bump (&self, amt : isize) -> isize {
@@ -356,14 +357,14 @@ impl <T> Drop for Receiver <T> {
 
 impl <T> Sender <T> {
   /// Non-blocking send.
+  #[expect(clippy::missing_panics_doc)]
   pub fn send (&self, t : T) -> Result <(), SendError <T>> {
     if self.inner.connected.load (Ordering::SeqCst) {
       match unsafe { (*self.producer.get()).try_push (t) } {
         None     => {}, // success
         Some (t) => {   // queue full
           let new_capacity = 2 * unsafe { (*self.producer.get()).capacity() };
-          let (new_producer, new_consumer)
-            = spsc::make (new_capacity);
+          let (new_producer, new_consumer) = spsc::make (new_capacity);
           // TODO: We are using a side channel here to send the new consumer
           // which was not part of the original standard library channel
           // implementation. Are we sure that this is safe to unwrap or should
@@ -377,6 +378,7 @@ impl <T> Sender <T> {
           }
         }
       }
+      // TODO: can we replace asserts with debug assertions ?
       match self.inner.counter.fetch_add (1, Ordering::SeqCst) {
         -1 => {
           self.inner.take_to_wake().signal();
@@ -395,9 +397,8 @@ impl <T> Sender <T> {
             let first    = consumer.try_pop();
             let second   = consumer.try_pop();
             assert!(second.is_none());
-            match first {
-              Some (t) => return Err (SendError (t)),
-              None     => {}
+            if let Some(t) = first {
+              return Err (SendError (t))
             }
           }
         },
@@ -436,21 +437,21 @@ impl <T> Drop for Sender <T> {
 impl Inner {
   fn take_to_wake (&self) -> std::sync::Arc <blocking::Inner> {
     let ptr = self.to_wake.swap (std::ptr::null_mut(), Ordering::SeqCst);
-    assert!(ptr != std::ptr::null_mut());
+    assert!(!ptr.is_null());
     unsafe {
       std::sync::Arc::from_raw (ptr)
     }
   }
 }
 
-impl <'a, T> Iterator for Iter <'a, T> {
+impl <T> Iterator for Iter <'_, T> {
   type Item = T;
   fn next (&mut self) -> Option <T> {
     self.rx.recv().ok()
   }
 }
 
-impl <'a, T> Iterator for TryIter <'a, T> {
+impl <T> Iterator for TryIter <'_, T> {
   type Item = T;
   fn next (&mut self) -> Option <T> {
     self.rx.try_recv().ok()
@@ -471,7 +472,7 @@ impl std::fmt::Display for RecvError {
 }
 
 impl std::error::Error for RecvError {
-  fn description (&self) -> &str {
+  fn description (&self) -> &'static str {
     "receiving on a closed channel"
   }
 
@@ -493,7 +494,7 @@ impl <T> std::fmt::Display for SendError <T> {
 }
 
 impl <T : Send> std::error::Error for SendError <T> {
-  fn description (&self) -> &str {
+  fn description (&self) -> &'static str {
     "sending on a closed channel"
   }
 
@@ -552,7 +553,7 @@ pub fn channel <T : 'static> () -> (Sender <T>, Receiver <T>) {
 mod tests {
   use super::*;
 
-  pub fn stress_factor() -> usize {
+  pub(crate) fn stress_factor() -> usize {
     match std::env::var ("RUST_TEST_STRESS") {
       Ok  (val) => val.parse().unwrap(),
       Err (..)  => 1,
@@ -572,16 +573,14 @@ mod tests {
     tx.send(Box::new (1)).unwrap();
   }
 
-  // FIXME: test failed on an unwrap
+  // TODO: test failed on an unwrap
   #[test]
   fn smoke_threads() {
     let (tx, rx) = channel::<i32>();
     let _t = std::thread::spawn (move|| {
-      // FIXME: debug
       println!("smoke threads sending...");
       tx.send (1).unwrap();
     });
-    // FIXME: debug
     println!("smoke threads receiving...");
     assert_eq!(rx.recv().unwrap(), 1);
   }
@@ -613,7 +612,7 @@ mod tests {
   fn smoke_chan_gone() {
     let (tx, rx) = channel::<i32>();
     drop (tx);
-    assert!(rx.recv().is_err());
+    rx.recv().unwrap_err();
   }
 
   #[test]
@@ -732,7 +731,7 @@ mod tests {
   #[test]
   fn oneshot_single_thread_try_send_open() {
     let (tx, rx) = channel::<i32>();
-    assert!(tx.send (10).is_ok());
+    tx.send (10).unwrap();
     assert!(rx.recv().unwrap() == 10);
   }
 
@@ -754,7 +753,7 @@ mod tests {
   fn oneshot_single_thread_try_recv_closed() {
     let (tx, rx) = channel::<i32>();
     drop (tx);
-    assert!(rx.recv().is_err());
+    rx.recv().unwrap_err();
   }
 
   #[test]
@@ -915,10 +914,8 @@ mod tests {
           assert_eq!(n, 1usize);
           recv_count += 1;
         }
-        Err (RecvTimeoutError::Timeout) => {
-          continue
-        },
-        Err (RecvTimeoutError::Disconnected) => break,
+        Err (RecvTimeoutError::Timeout) => { }
+        Err (RecvTimeoutError::Disconnected) => break
       }
     }
 
@@ -934,7 +931,7 @@ mod tests {
   }
 
   #[test]
-  fn test_nested_recv_iter() {
+  fn nested_recv_iter() {
     let (tx, rx) = channel::<i32>();
     let (total_tx, total_rx) = channel::<i32>();
 
@@ -954,7 +951,7 @@ mod tests {
   }
 
   #[test]
-  fn test_recv_iter_break() {
+  fn recv_iter_break() {
     let (tx, rx) = channel::<i32>();
     let (count_tx, count_rx) = channel();
 
@@ -978,12 +975,12 @@ mod tests {
     assert_eq!(count_rx.recv().unwrap(), 4);
   }
 
-  // FIXME: failures
+  // TODO: failures
   // - failed with assertion on line 394 in send fn
   //   assert!(second.is_none())
   // - failed to finish in less than 60 seconds
   #[test]
-  fn test_recv_try_iter() {
+  fn recv_try_iter() {
     let (request_tx, request_rx) = channel();
     let (response_tx, response_rx) = channel();
 
@@ -997,28 +994,25 @@ mod tests {
             return count;
           }
         }
-        // FIXME: debug
         println!("test recv try iter send request...");
         request_tx.send (true).unwrap();
       }
     });
 
     for _ in request_rx.iter() {
-      // FIXME: debug
       println!("test recv try iter send response...");
       if response_tx.send (2).is_err() {
         break;
       }
     }
 
-    // FIXME: debug
     println!("test recv try iter join...");
 
     assert_eq!(t.join().unwrap(), 6);
   }
 
   #[test]
-  fn test_recv_into_iter_owned() {
+  fn recv_into_iter_owned() {
     let mut iter = {
       let (tx, rx) = channel::<i32>();
       tx.send (1).unwrap();
@@ -1028,11 +1022,11 @@ mod tests {
     };
     assert_eq!(iter.next().unwrap(), 1);
     assert_eq!(iter.next().unwrap(), 2);
-    assert_eq!(iter.next().is_none(), true);
+    assert!(iter.next().is_none());
   }
 
   #[test]
-  fn test_recv_into_iter_borrowed() {
+  fn recv_into_iter_borrowed() {
     let (tx, rx) = channel::<i32>();
     tx.send (1).unwrap();
     tx.send (2).unwrap();
@@ -1040,10 +1034,10 @@ mod tests {
     let mut iter = (&rx).into_iter();
     assert_eq!(iter.next().unwrap(), 1);
     assert_eq!(iter.next().unwrap(), 2);
-    assert_eq!(iter.next().is_none(), true);
+    assert!(iter.next().is_none());
   }
 
-  // FIXME: test failed unwrap on RecvError
+  // TODO: test failed unwrap on RecvError
   #[test]
   fn try_recv_states() {
     let (tx1, rx1) = channel::<i32>();
@@ -1079,6 +1073,6 @@ mod tests {
   fn zero_size() {
     let (tx, rx) = channel::<()>();
     tx.send (()).unwrap();
-    assert_eq!(rx.recv().unwrap(), ());
+    let () = rx.recv().unwrap();
   }
 }

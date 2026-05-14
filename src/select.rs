@@ -5,7 +5,7 @@ use crate::{blocking, Receiver, RecvError, SelectionResult};
 
 /// A "receiver set" structure used to manage a set of receivers being selected
 /// over.
-pub struct Select {
+pub(crate) struct Select {
   inner   : std::cell::UnsafeCell <Inner>,
   next_id : std::cell::Cell <usize>
 }
@@ -14,7 +14,7 @@ impl !Send for Select {}
 /// Handle to a receiver which is currently a member of a `Select` set of
 /// receivers, used to keep the receiver in the set as well as to interact
 /// with the underlying receiver.
-pub struct Handle <'rx, T : Send + 'rx> {
+pub(crate) struct Handle <'rx, T : Send> {
   /// The ID of this handle, used to compare against the return value of
   /// `Select:::wait()`
   id       : usize,
@@ -38,12 +38,12 @@ struct HandleIter {
 }
 
 #[derive(PartialEq, Eq)]
-pub enum StartResult {
+pub(crate) enum StartResult {
   Installed,
   Abort
 }
 
-pub trait Packet {
+pub(crate) trait Packet {
   fn can_recv        (&self) -> bool;
   fn start_selection (&self, token : std::sync::Arc <blocking::Inner>)
     -> StartResult;
@@ -52,7 +52,7 @@ pub trait Packet {
 
 impl Select {
   /// New empty selection structure.
-  pub fn new () -> Select {
+  pub(crate) const fn new () -> Select {
     Select {
       inner: std::cell::UnsafeCell::new (Inner {
         head: std::ptr::null_mut(),
@@ -64,7 +64,7 @@ impl Select {
 
   /// New handle into this receiver set for a new receiver; does *not* add the
   /// receiver to the receiver set, for that call `add` on the handle itself.
-  pub fn handle <'a, T> (&'a self, rx : &'a Receiver <T>) -> Handle <'a, T>
+  pub(crate) fn handle <'a, T> (&'a self, rx : &'a Receiver <T>) -> Handle <'a, T>
     where T : Send
   {
     let id = self.next_id.get();
@@ -85,7 +85,7 @@ impl Select {
   /// with the matching `id` will have some sort of "event" available on it:
   /// either that data is available or the corresponding channel has been
   /// closed.
-  pub fn wait (&self) -> usize {
+  pub(crate) fn wait (&self) -> usize {
     self.wait2 (true)
   }
 
@@ -116,7 +116,7 @@ impl Select {
       // Stage 3: no message availble, actually block
       wait_token.wait();
       // Stage 4: must be a message; find it
-      let mut ready_id = std::usize::MAX;
+      let mut ready_id = usize::MAX;
       for handle in self.iter() {
         if (*handle).packet.abort_selection() {
           ready_id = (*handle).id;
@@ -124,8 +124,8 @@ impl Select {
       }
 
       // must have found a ready receiver
-      assert_ne!(ready_id, std::usize::MAX);
-      return ready_id;
+      assert_ne!(ready_id, usize::MAX);
+      ready_id
     }
   }
 
@@ -153,54 +153,55 @@ impl Drop for Select {
 
 impl <'rx, T> Handle <'rx, T> where T : Send {
   #[inline]
-  pub fn id (&self) -> usize {
+  pub(crate) const fn id (&self) -> usize {
     self.id
   }
 
-  pub fn recv (&mut self) -> Result <T, RecvError> {
+  pub(crate) fn recv (&self) -> Result <T, RecvError> {
     self.rx.recv()
   }
 
   /// Add this handle to the receiver set that the handle was created from.
-  pub unsafe fn add (&mut self) {
+  pub(crate) unsafe fn add (&mut self) {
     if self.added {
       return
     }
 
-    let selector = &mut *self.selector;
-    let me = self as *mut Handle <'rx, T> as *mut Handle <'static, ()>;
+    let selector = unsafe { &mut *self.selector };
+    let me = std::ptr::from_mut::<Handle <'rx, T>> (self) as *mut Handle <'static, ()>;
     if selector.head.is_null() {
       selector.head = me;
-      selector.tail = me;
     } else {
-      (*me).prev = selector.tail;
-      assert!((*me).next.is_null());
-      (*selector.tail).next = me;
-      selector.tail = me;
+      unsafe {
+        (*me).prev = selector.tail;
+        assert!((*me).next.is_null());
+        (*selector.tail).next = me;
+      }
     }
+    selector.tail = me;
 
     self.added = true;
   }
 
   /// Remove this handle from the receiver set.
-  pub unsafe fn remove (&mut self) {
+  pub(crate) unsafe fn remove (&mut self) {
     if !self.added {
       return
     }
 
-    let selector = &mut *self.selector;
-    let me = self as *mut Handle <'rx, T> as *mut Handle <'static, ()>;
+    let selector = unsafe { &mut *self.selector };
+    let me = std::ptr::from_mut::<Handle <'rx, T>>(self) as *mut Handle <'static, ()>;
     if self.prev.is_null() {
       assert_eq!(selector.head, me);
       selector.head = self.next;
     } else {
-      (*self.prev).next = self.next;
+      unsafe { (*self.prev).next = self.next; }
     }
     if self.next.is_null() {
       assert_eq!(selector.tail, me);
       selector.tail = self.prev;
     } else {
-      (*self.next).prev = self.prev;
+      unsafe { (*self.next).prev = self.prev; }
     }
 
     self.next = std::ptr::null_mut();
@@ -215,7 +216,7 @@ impl <'rx, T> std::fmt::Debug for Handle <'rx, T> where T : Send + 'rx {
   }
 }
 
-impl <'rx, T> Drop for Handle <'rx, T> where T : Send {
+impl <T> Drop for Handle <'_, T> where T : Send {
   fn drop (&mut self) {
     unsafe { self.remove() }
   }
@@ -239,19 +240,19 @@ impl Iterator for HandleIter {
 impl <T> Packet for Receiver <T> {
   #[inline]
   fn can_recv (&self) -> bool {
-    self.can_recv()
+    self.can_recv_()
   }
   fn start_selection (&self, token : std::sync::Arc <blocking::Inner>)
     -> StartResult
   {
-    match self.start_selection (token) {
+    match self.start_selection_ (token) {
       SelectionResult::SelSuccess  => StartResult::Installed,
       SelectionResult::SelCanceled => StartResult::Abort
     }
   }
   #[inline]
   fn abort_selection (&self) -> bool {
-    self.abort_selection()
+    self.abort_selection_()
   }
 }
 
@@ -277,7 +278,6 @@ macro_rules! select {
   }}
 }
 
-#[allow(unused_imports)]
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -299,12 +299,12 @@ mod tests {
     }
     drop(tx1);
     select! {
-      foo = rx1.recv() => { assert!(foo.is_err()); },
+      foo = rx1.recv() => { foo.unwrap_err(); },
       _bar = rx2.recv() => panic!()
     }
     drop(tx2);
     select! {
-      bar = rx2.recv() => { assert!(bar.is_err()); }
+      bar = rx2.recv() => { bar.unwrap_err(); }
     }
   }
 
@@ -333,7 +333,7 @@ mod tests {
 
     select! {
       _a1 = rx1.recv() => panic!(),
-      a2 = rx2.recv() => { assert!(a2.is_err()); }
+      a2 = rx2.recv() => { a2.unwrap_err(); }
     }
   }
 
@@ -515,7 +515,7 @@ mod tests {
   #[test]
   fn fmt_debug_select() {
     let sel = Select::new();
-    assert_eq!(format!("{:?}", sel), "Select { .. }");
+    assert_eq!(format!("{sel:?}"), "Select { .. }");
   }
 
   #[test]
@@ -523,6 +523,6 @@ mod tests {
     let (_, rx) = channel::<i32>();
     let sel = Select::new();
     let handle = sel.handle(&rx);
-    assert_eq!(format!("{:?}", handle), "Handle { .. }");
+    assert_eq!(format!("{handle:?}"), "Handle { .. }");
   }
 }
