@@ -357,24 +357,74 @@ impl <'a, T> IntoIterator for &'a Receiver <T> {
 
 impl <T> Drop for Receiver <T> {
   fn drop (&mut self) {
+    // Gate future sends: once `connected` is observed `false`, `Sender::send` bails out
+    // before pushing, so after this point at most ONE in-flight `send` (whose
+    // `connected.load` already returned `true`) may still commit, after which no more
+    // pushes ever happen. The drain loop below relies on this bound.
     self.inner.connected.store (false, Ordering::SeqCst);
 
-    // NOTE: The following code to clear the queue comes from the original
-    // standard library MPSC stream-flavor drop function. Whether it is
-    // necessary because of the linked-list queue used in that case, or rather
-    // it is needed to ensure the synchronization with the sender is not known.
-    // Besides the one-time overhead it shouldn't hurt so we will do it
-    // regardless.
-    // TODO: find out if this is required or we can just drop the queue
+    // Drain remaining messages so that:
+    //   1. their destructors run *now*, while the receiver's `T` type is still in scope
+    //      (the bounded queues' `Buffer::drop` will of course also drop them, but only
+    //      when the last `Arc<Buffer<T>>` is released, which can be later); and
+    //   2. the channel `counter` can be reconciled with our local `steals` and CAS'd to
+    //      `DISCONNECTED`, which is what informs senders that the orphan path applies
+    //      (see `Sender::send`).
+    //
+    // Because this crate grows the channel by allocating a fresh `bounded-spsc-queue`
+    // and publishing the new `Consumer` via the `send_new` / `receive_new`
+    // `std::sync::mpsc` side channel, draining requires walking that side channel too:
+    // items pushed after a resize live in queues whose `Consumer` is still buffered in
+    // `receive_new`, not in `*self.consumer.get()`. Without this side-channel walk, the
+    // CAS below never observes `counter == steals` and the loop spins forever (this
+    // manifested as a hang in `tests::recv_try_iter` when run alongside other tests).
     let mut steals = unsafe { *self.steals.get() };
+    // Bound on consecutive `yield_now`s with no observable progress. If the sender is
+    // parked on an unrelated channel rather than mid-send, the counter will never
+    // converge on `steals` here, but the orphan items (if any) are still safe --
+    // `Buffer::drop` will destruct them when the bounded queues' `Arc<Buffer<T>>`
+    // refcounts hit zero.
+    const MAX_IDLE_YIELDS : u32 = 32;
+    let mut idle_yields = 0u32;
     while {
       let count = self.inner.counter.compare_exchange (
         steals, DISCONNECTED, Ordering::SeqCst, Ordering::SeqCst
       ).unwrap_or_else (|i| i);
       count != DISCONNECTED && count != steals
     } {
+      // Drain the current consumer.
+      let mut drained_here = 0;
       while let Some (_t) = unsafe { (*self.consumer.get()).try_pop() } {
         steals += 1;
+        drained_here += 1;
+      }
+      // Try to pick up the next post-resize consumer from the side channel.
+      match self.receive_new.try_recv() {
+        Ok (new_consumer) => unsafe {
+          *self.consumer.get() = new_consumer;
+          idle_yields = 0;
+        }
+        Err (std::sync::mpsc::TryRecvError::Empty) => {
+          if drained_here != 0 {
+            idle_yields = 0;
+          } else {
+            idle_yields += 1;
+            if idle_yields >= MAX_IDLE_YIELDS {
+              // Give up: store DISCONNECTED unconditionally. The CAS in the loop
+              // condition would otherwise spin forever (sender parked on another
+              // channel, no further progress observable here).
+              self.inner.counter.store (DISCONNECTED, Ordering::SeqCst);
+              break;
+            }
+            std::thread::yield_now();
+          }
+        }
+        Err (std::sync::mpsc::TryRecvError::Disconnected) => {
+          // Sender is gone entirely; no further new consumers will arrive. Force
+          // DISCONNECTED state and let `Buffer::drop` clean up the rest.
+          self.inner.counter.store (DISCONNECTED, Ordering::SeqCst);
+          break;
+        }
       }
     }
   }
@@ -386,7 +436,7 @@ impl <T> Sender <T> {
   /// # Delivery guarantee
   ///
   /// Returning `Ok(())` indicates that the message was successfully enqueued, but it
-  /// does **not** guarantee that the receiver will observe it: if the [`Receiver`] is
+  /// does not guarantee that the receiver will observe it: if the [`Receiver`] is
   /// dropped concurrently with this call, the message may be silently discarded. The
   /// orphaned value is destructed properly when the underlying queue is dropped; it is
   /// not leaked.
@@ -397,6 +447,7 @@ impl <T> Sender <T> {
   // not expose a safe way to recover an already-pushed value from the producer side,
   // and the previous implementation that did so via `std::mem::transmute` was unsound
   // (see issues #1 and #4).
+  #[expect(clippy::missing_panics_doc)]
   pub fn send (&self, t : T) -> Result <(), SendError <T>> {
     if self.inner.connected.load (Ordering::SeqCst) {
       match unsafe { (*self.producer.get()).try_push (t) } {
@@ -404,11 +455,10 @@ impl <T> Sender <T> {
         Some (t) => {   // queue full
           let new_capacity = 2 * unsafe { (*self.producer.get()).capacity() };
           let (new_producer, new_consumer) = spsc::make (new_capacity);
-          // TODO: We are using a side channel here to send the new consumer
-          // which was not part of the original standard library channel
-          // implementation. Are we sure that this is safe to unwrap or should
-          // we handle the result explicitly ?
-          self.send_new.send (new_consumer).unwrap();
+          if self.send_new.send (new_consumer).is_err() {
+            // Receiver may have dropped since `connected.load()`, treat as disconnected
+            return Err (SendError (t));
+          }
           unsafe { *self.producer.get() = new_producer; }
           match unsafe { (*self.producer.get()).try_push (t) } {
             None      => {}
