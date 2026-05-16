@@ -1066,10 +1066,6 @@ mod tests {
     assert_eq!(count_rx.recv().unwrap(), 4);
   }
 
-  // TODO: failures
-  // - failed with assertion on line 394 in send fn
-  //   assert!(second.is_none())
-  // - failed to finish in less than 60 seconds
   #[test]
   fn recv_try_iter() {
     let (request_tx, request_rx) = channel();
@@ -1165,5 +1161,19 @@ mod tests {
     let (tx, rx) = channel::<()>();
     tx.send (()).unwrap();
     let () = rx.recv().unwrap();
+  }
+
+  #[test]
+  fn race_disconnect_does_not_corrupt_sender_or_abort() {
+    for _ in 0..200 {
+      let (tx, rx) = channel::<Box<u64>>();
+      let h = std::thread::spawn(move || {
+        for _ in 0..10_000 {
+          let _ = tx.send(Box::new(0xDEAD_BEEF));
+        }
+      });
+      drop(rx);
+      h.join().unwrap();
+    }
   }
 }
